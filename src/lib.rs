@@ -1,3 +1,5 @@
+mod test_ffi;
+
 #[cfg(test)]
 mod tests {
     #[test]
