@@ -25,3 +25,31 @@ pub extern "C" fn print_cstring(text: *const c_char) {
     let str = cstr.to_str().unwrap();
     println!("Text: {}", str);
 }
+
+// without repr(C), cbindgen makes this opaque
+#[derive(Debug)]
+pub struct RObject {
+    a: u32,
+    b: u32,
+}
+
+#[no_mangle]
+pub extern "C" fn robject_new() -> *mut RObject {
+    let obj = Box::new(RObject { a: 1, b: 2 });
+    Box::into_raw(obj)
+}
+
+#[no_mangle]
+pub extern "C" fn robject_change(p: *mut RObject) {
+    let obj = unsafe { &mut *p };
+    obj.a += 1;
+}
+
+#[no_mangle]
+pub extern "C" fn robject_free(p: *mut RObject) {
+    if p.is_null() {
+        return;
+    }
+    let robject = unsafe { Box::from_raw(p) };
+    println!("Freeing {:?}", robject);
+}
