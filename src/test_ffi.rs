@@ -2,6 +2,8 @@ use core::slice;
 use std::{
     ffi::{CStr, CString},
     os::raw::c_char,
+    thread::sleep,
+    time::Duration,
 };
 
 #[no_mangle]
@@ -62,4 +64,9 @@ pub extern "C" fn sum_array(data: *const u8, len: usize) -> u32 {
     };
     let slice = unsafe { slice::from_raw_parts(data, len) };
     slice.iter().fold(0, |acc, item| acc + (*item as u32))
+}
+
+#[no_mangle]
+pub extern "C" fn block(millis: u64) {
+    sleep(Duration::from_millis(millis));
 }
