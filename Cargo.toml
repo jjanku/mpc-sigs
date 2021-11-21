@@ -9,6 +9,7 @@ edition = "2018"
 crate-type = ["cdylib"]
 
 [dependencies]
+openssl = "0.10.38"
 
 [build-dependencies]
 cbindgen = "0.20.0"
