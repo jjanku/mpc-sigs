@@ -10,6 +10,9 @@ crate-type = ["cdylib"]
 
 [dependencies]
 openssl = "0.10.38"
+# Need to keep these in sync with
+# the version used by openssl
+foreign-types = "0.3.1"
 
 [build-dependencies]
 cbindgen = "0.20.0"
