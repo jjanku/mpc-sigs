@@ -51,10 +51,10 @@ pub extern "C" fn cert_key_get_cert(p: *mut CertKey) -> *mut c_void {
 
 fn gen_self_signed_cert(pkey: &PKeyRef<Private>) -> Result<X509, ErrorStack> {
     let names = vec![
-        ("C", "US"),
-        ("ST", "CA"),
-        ("O", "Some organization"),
-        ("CN", "www.example.com"),
+        ("C", "CZ"),
+        ("ST", "CZ"),
+        ("O", "MeeSign app, DECT 2021-2025"),
+        ("CN", "MeeSign app, DECT 2021-2025"),
     ];
 
     let mut name_builder = X509NameBuilder::new()?;
