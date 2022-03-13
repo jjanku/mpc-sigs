@@ -9,6 +9,7 @@ edition = "2018"
 crate-type = ["cdylib"]
 
 [dependencies]
+mpecdsa = { git = "https://github.com/jirigav/mpecdsa.git" }
 
 [build-dependencies]
 cbindgen = "0.20.0"
