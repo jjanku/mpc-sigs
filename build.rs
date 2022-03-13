@@ -11,4 +11,7 @@ fn main() {
         .generate()
         .expect("Unable to generate bindings")
         .write_to_file("include/bindings.h");
+
+    prost_build::compile_protos(&["proto/meesign.proto"], &["proto/"])
+        .expect("Unable to compile protos:");
 }
