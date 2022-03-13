@@ -10,6 +10,8 @@ crate-type = ["cdylib"]
 
 [dependencies]
 mpecdsa = { git = "https://github.com/jirigav/mpecdsa.git" }
+prost = "0.9.0"
 
 [build-dependencies]
 cbindgen = "0.20.0"
+prost-build = "0.9.0"
