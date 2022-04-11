@@ -2,22 +2,23 @@ mod meesign {
     include!(concat!(env!("OUT_DIR"), "/meesign.rs"));
 }
 
-use bincode::{deserialize, serialize};
 use core::slice;
 use meesign::{Gg18KeyGenInit, Gg18Message};
 use mpecdsa::gg18_key_gen::*;
 use prost::Message;
 use serde::{Deserialize, Serialize};
-use std::{iter, vec};
+use std::iter;
 
 fn deserialize_vec<'de, T: Deserialize<'de>>(vec: &'de [Vec<u8>]) -> Vec<T> {
     vec.into_iter()
-        .map(|item| deserialize::<T>(item).unwrap())
+        .map(|item| serde_json::from_slice::<T>(item).unwrap())
         .collect()
 }
 
 fn serialize_inflate<T: Serialize>(value: &T, n: usize) -> Vec<Vec<u8>> {
-    iter::repeat(serialize(value).unwrap()).take(n).collect()
+    iter::repeat(serde_json::to_vec(value).unwrap())
+        .take(n)
+        .collect()
 }
 
 fn unpack(data: &[u8]) -> Vec<Vec<u8>> {
@@ -40,7 +41,9 @@ enum KeygenContext {
 impl KeygenContext {
     fn init(data: &[u8]) -> (Self, Vec<u8>) {
         let msg = Gg18KeyGenInit::decode(data).unwrap();
+        println!("init {:#?}", msg);
         let (out, c1) = gg18_key_gen_1(msg.parties as u16, msg.threshold as u16, msg.index as u16);
+        println!("init finished");
         (
             KeygenContext::C1(c1),
             pack(serialize_inflate(&out, msg.parties as usize - 1)),
@@ -49,7 +52,7 @@ impl KeygenContext {
 
     fn advance(self, data: &[u8]) -> (Self, Vec<u8>) {
         let parts = unpack(data);
-        let n = parts.len() - 1;
+        let n = parts.len();
 
         let (c, data_out) = match self {
             KeygenContext::C1(c1) => {
@@ -61,7 +64,7 @@ impl KeygenContext {
                 let (out, c3) = gg18_key_gen_3(deserialize_vec(&parts), c2);
                 let outs: Vec<Vec<u8>> = out
                     .iter()
-                    .map(|scalar| serialize(scalar).unwrap())
+                    .map(|scalar| serde_json::to_vec(scalar).unwrap())
                     .collect();
                 (Self::C3(c3), outs)
             }
@@ -77,7 +80,10 @@ impl KeygenContext {
             }
             KeygenContext::C5(c5) => {
                 let c = gg18_key_gen_6(deserialize_vec(&parts), c5);
-                (Self::Finished(c), vec![])
+                // FIXME: add separate inflate function?
+                // maybe it shouldn't be inflated at all
+                let outs = iter::repeat(c.pk.to_bytes(true).to_vec()).take(n).collect();
+                (Self::Finished(c), outs)
             }
             KeygenContext::Finished(_) => unreachable!(),
         };
@@ -140,6 +146,15 @@ pub extern "C" fn gg18_keygen_finished(context: *const Gg18Context) -> bool {
     match ctx.keygen_ctx {
         Some(KeygenContext::Finished(_)) => true,
         _ => false,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn gg18_context_pk(context: *mut Gg18Context) -> *const u8 {
+    let ctx = unsafe { &*context };
+    match &ctx.keygen_ctx {
+        Some(KeygenContext::Finished(sign_ctx)) => sign_ctx.pk.to_bytes(true).as_ptr(),
+        _ => std::ptr::null(),
     }
 }
 
