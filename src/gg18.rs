@@ -4,7 +4,7 @@ mod meesign {
 
 use core::slice;
 use meesign::{Gg18KeyGenInit, Gg18Message};
-use mpecdsa::gg18_key_gen::*;
+use mpecdsa::{gg18_key_gen::*, gg18_sign::*};
 use prost::Message;
 use serde::{Deserialize, Serialize};
 use std::iter;
@@ -41,9 +41,11 @@ enum KeygenContext {
 impl KeygenContext {
     fn init(data: &[u8]) -> (Self, Vec<u8>) {
         let msg = Gg18KeyGenInit::decode(data).unwrap();
-        println!("init {:#?}", msg);
-        let (out, c1) = gg18_key_gen_1(msg.parties as u16, msg.threshold as u16, msg.index as u16);
-        println!("init finished");
+
+        let (parties, threshold, index) =
+            (msg.parties as u16, msg.threshold as u16, msg.index as u16);
+
+        let (out, c1) = gg18_key_gen_1(parties, threshold, index);
         (
             KeygenContext::C1(c1),
             pack(serialize_inflate(&out, msg.parties as usize - 1)),
@@ -55,6 +57,7 @@ impl KeygenContext {
         let n = parts.len();
 
         let (c, data_out) = match self {
+            // TODO: use trait objects?
             KeygenContext::C1(c1) => {
                 let (out, c2) = gg18_key_gen_2(deserialize_vec(&parts), c1);
                 let outs = serialize_inflate(&out, n);
@@ -90,6 +93,23 @@ impl KeygenContext {
 
         (c, pack(data_out))
     }
+}
+
+enum SignContext {
+    C1(GG18SignContext1),
+    C2(GG18SignContext2),
+    C3(GG18SignContext3),
+    C4(GG18SignContext4),
+    C5(GG18SignContext5),
+    C6(GG18SignContext6),
+    C7(GG18SignContext7),
+    C8(GG18SignContext8),
+    C9(GG18SignContext9),
+    Finished(Vec<u8>),
+}
+
+impl SignContext {
+    // fn advance(self, data: &[u8]) -> (Self, Vec<u8>) {}
 }
 
 pub struct Gg18Context {
