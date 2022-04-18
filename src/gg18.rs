@@ -38,33 +38,35 @@ enum KeygenContext {
     Finished(GG18SignContext),
 }
 
+type LibResult<T> = Result<T, &'static str>;
+
 impl KeygenContext {
-    fn init(data: &[u8]) -> (Self, Vec<u8>) {
+    fn init(data: &[u8]) -> LibResult<(Self, Vec<u8>)> {
         let msg = Gg18KeyGenInit::decode(data).unwrap();
 
         let (parties, threshold, index) =
             (msg.parties as u16, msg.threshold as u16, msg.index as u16);
 
-        let (out, c1) = gg18_key_gen_1(parties, threshold, index);
-        (
+        let (out, c1) = gg18_key_gen_1(parties, threshold, index)?;
+        Ok((
             KeygenContext::C1(c1),
             pack(serialize_inflate(&out, msg.parties as usize - 1)),
-        )
+        ))
     }
 
-    fn advance(self, data: &[u8]) -> (Self, Vec<u8>) {
+    fn advance(self, data: &[u8]) -> LibResult<(Self, Vec<u8>)> {
         let parts = unpack(data);
         let n = parts.len();
 
         let (c, data_out) = match self {
             // TODO: use trait objects?
             KeygenContext::C1(c1) => {
-                let (out, c2) = gg18_key_gen_2(deserialize_vec(&parts), c1);
+                let (out, c2) = gg18_key_gen_2(deserialize_vec(&parts), c1)?;
                 let outs = serialize_inflate(&out, n);
                 (Self::C2(c2), outs)
             }
             KeygenContext::C2(c2) => {
-                let (out, c3) = gg18_key_gen_3(deserialize_vec(&parts), c2);
+                let (out, c3) = gg18_key_gen_3(deserialize_vec(&parts), c2)?;
                 let outs: Vec<Vec<u8>> = out
                     .iter()
                     .map(|scalar| serde_json::to_vec(scalar).unwrap())
@@ -72,17 +74,17 @@ impl KeygenContext {
                 (Self::C3(c3), outs)
             }
             KeygenContext::C3(c3) => {
-                let (out, c4) = gg18_key_gen_4(deserialize_vec(&parts), c3);
+                let (out, c4) = gg18_key_gen_4(deserialize_vec(&parts), c3)?;
                 let outs = serialize_inflate(&out, n);
                 (Self::C4(c4), outs)
             }
             KeygenContext::C4(c4) => {
-                let (out, c5) = gg18_key_gen_5(deserialize_vec(&parts), c4);
+                let (out, c5) = gg18_key_gen_5(deserialize_vec(&parts), c4)?;
                 let outs = serialize_inflate(&out, n);
                 (Self::C5(c5), outs)
             }
             KeygenContext::C5(c5) => {
-                let c = gg18_key_gen_6(deserialize_vec(&parts), c5);
+                let c = gg18_key_gen_6(deserialize_vec(&parts), c5)?;
                 // FIXME: add separate inflate function?
                 // maybe it shouldn't be inflated at all
                 let outs = iter::repeat(c.pk.to_bytes(true).to_vec()).take(n).collect();
@@ -91,7 +93,7 @@ impl KeygenContext {
             KeygenContext::Finished(_) => unreachable!(),
         };
 
-        (c, pack(data_out))
+        Ok((c, pack(data_out)))
     }
 }
 
@@ -119,7 +121,7 @@ pub struct Gg18Context {
 
 impl Gg18Context {
     fn init(data: &[u8]) -> Self {
-        let (ctx, out) = KeygenContext::init(data);
+        let (ctx, out) = KeygenContext::init(data).unwrap();
         Gg18Context {
             keygen_ctx: Some(ctx),
             data_out: out,
@@ -127,7 +129,7 @@ impl Gg18Context {
     }
 
     fn keygen_advance(&mut self, data: &[u8]) {
-        let (new_ctx, out) = self.keygen_ctx.take().unwrap().advance(data);
+        let (new_ctx, out) = self.keygen_ctx.take().unwrap().advance(data).unwrap();
         self.keygen_ctx = Some(new_ctx);
         self.data_out = out;
     }
