@@ -3,7 +3,7 @@ mod meesign {
 }
 
 use core::slice;
-use meesign::{Gg18KeyGenInit, Gg18Message};
+use meesign::{Gg18KeyGenInit, Gg18Message, Gg18SignInit};
 use mpecdsa::{gg18_key_gen::*, gg18_sign::*};
 use prost::Message;
 use serde::{Deserialize, Serialize};
@@ -38,10 +38,13 @@ enum KeygenContext {
     Finished(GG18SignContext),
 }
 
-type LibResult<T> = Result<T, &'static str>;
+type ContextResult<T> = Result<(T, Vec<u8>), &'static str>;
+
+// TODO: use trait objects like tofn?
+// maybe macros could help as well?
 
 impl KeygenContext {
-    fn init(data: &[u8]) -> LibResult<(Self, Vec<u8>)> {
+    fn init(data: &[u8]) -> ContextResult<Self> {
         let msg = Gg18KeyGenInit::decode(data).unwrap();
 
         let (parties, threshold, index) =
@@ -54,12 +57,11 @@ impl KeygenContext {
         ))
     }
 
-    fn advance(self, data: &[u8]) -> LibResult<(Self, Vec<u8>)> {
+    fn advance(self, data: &[u8]) -> ContextResult<Self> {
         let parts = unpack(data);
         let n = parts.len();
 
         let (c, data_out) = match self {
-            // TODO: use trait objects?
             KeygenContext::C1(c1) => {
                 let (out, c2) = gg18_key_gen_2(deserialize_vec(&parts), c1)?;
                 let outs = serialize_inflate(&out, n);
@@ -111,7 +113,77 @@ enum SignContext {
 }
 
 impl SignContext {
-    // fn advance(self, data: &[u8]) -> (Self, Vec<u8>) {}
+    fn init(context: &GG18SignContext, data: &[u8]) -> ContextResult<Self> {
+        let msg = Gg18SignInit::decode(data).unwrap();
+
+        // FIXME: proto fields should have matching types, i.e. i16, not i32
+        let indices: Vec<u16> = msg.indices.into_iter().map(|i| i as u16).collect();
+        let parties = indices.len();
+
+        let (out, c1) = gg18_sign1(context.clone(), indices, msg.index as usize, msg.hash)?;
+        Ok((
+            SignContext::C1(c1),
+            pack(serialize_inflate(&out, parties - 1)),
+        ))
+    }
+
+    fn advance(self, data: &[u8]) -> ContextResult<Self> {
+        let parts = unpack(data);
+        let n = parts.len();
+
+        let (c, data_out) = match self {
+            SignContext::C1(c1) => {
+                let (out, c2) = gg18_sign2(deserialize_vec(&parts), c1)?;
+                let outs: Vec<Vec<u8>> = out
+                    .iter()
+                    .map(|msg_b_pair| serde_json::to_vec(msg_b_pair).unwrap())
+                    .collect();
+                (Self::C2(c2), outs)
+            }
+            SignContext::C2(c2) => {
+                let (out, c3) = gg18_sign3(deserialize_vec(&parts), c2)?;
+                let outs = serialize_inflate(&out, n);
+                (Self::C3(c3), outs)
+            }
+            SignContext::C3(c3) => {
+                let (out, c4) = gg18_sign4(deserialize_vec(&parts), c3)?;
+                let outs = serialize_inflate(&out, n);
+                (Self::C4(c4), outs)
+            }
+            SignContext::C4(c4) => {
+                let (out, c5) = gg18_sign5(deserialize_vec(&parts), c4)?;
+                let outs = serialize_inflate(&out, n);
+                (Self::C5(c5), outs)
+            }
+            SignContext::C5(c5) => {
+                let (out, c6) = gg18_sign6(deserialize_vec(&parts), c5)?;
+                let outs = serialize_inflate(&out, n);
+                (Self::C6(c6), outs)
+            }
+            SignContext::C6(c6) => {
+                let (out, c7) = gg18_sign7(deserialize_vec(&parts), c6)?;
+                let outs = serialize_inflate(&out, n);
+                (Self::C7(c7), outs)
+            }
+            SignContext::C7(c7) => {
+                let (out, c8) = gg18_sign8(deserialize_vec(&parts), c7)?;
+                let outs = serialize_inflate(&out, n);
+                (Self::C8(c8), outs)
+            }
+            SignContext::C8(c8) => {
+                let (out, c9) = gg18_sign9(deserialize_vec(&parts), c8)?;
+                let outs = serialize_inflate(&out, n);
+                (Self::C9(c9), outs)
+            }
+            SignContext::C9(c9) => {
+                let sig = gg18_sign10(deserialize_vec(&parts), c9)?;
+                (Self::Finished(sig), vec![])
+            }
+            SignContext::Finished(_) => unreachable!(),
+        };
+
+        Ok((c, pack(data_out)))
+    }
 }
 
 pub struct Gg18Context {
