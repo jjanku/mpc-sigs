@@ -13,11 +13,15 @@ fn deserialize_vec<'de, T: Deserialize<'de>>(vec: &'de [Vec<u8>]) -> serde_json:
         .collect()
 }
 
+fn inflate<T: Clone>(value: T, n: usize) -> Vec<T> {
+    std::iter::repeat(value).take(n).collect()
+}
+
 /// Serialize value and repeat the result n times,
 /// as the current server always expects one message for each party
 fn serialize_bcast<T: Serialize>(value: &T, n: usize) -> serde_json::Result<Vec<Vec<u8>>> {
     let ser = serde_json::to_vec(value)?;
-    Ok(std::iter::repeat(ser).take(n).collect())
+    Ok(inflate(ser, n))
 }
 
 /// Serialize vector of unicast messages
@@ -91,9 +95,7 @@ impl KeygenContext {
                 let c = gg18_key_gen_6(deserialize_vec(&msgs)?, c5)?;
                 // FIXME: add separate inflate function?
                 // maybe it shouldn't be inflated at all
-                let ser = std::iter::repeat(c.pk.to_bytes(true).to_vec())
-                    .take(n)
-                    .collect();
+                let ser = inflate(c.pk.to_bytes(true).to_vec(), n);
                 (Self::Finished(c), ser)
             }
             KeygenContext::Finished(_) => unreachable!(),
