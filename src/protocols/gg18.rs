@@ -119,7 +119,7 @@ impl Group for GG18SignContext {
     }
 }
 
-pub enum SignContext {
+enum SignContext {
     C1(GG18SignContext1),
     C2(GG18SignContext2),
     C3(GG18SignContext3),
@@ -132,7 +132,7 @@ pub enum SignContext {
 }
 
 impl SignContext {
-    pub fn init(context: GG18SignContext, data: &[u8]) -> SigningResult {
+    fn init(context: GG18SignContext, data: &[u8]) -> SigningResult {
         let msg = Gg18SignInit::decode(data)?;
 
         // FIXME: proto fields should have matching types, i.e. i16, not i32
