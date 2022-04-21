@@ -2,7 +2,7 @@ mod meesign {
     include!(concat!(env!("OUT_DIR"), "/meesign.rs"));
 }
 
-use crate::context::*;
+use crate::protocol::*;
 use meesign::{Gg18KeyGenInit, Gg18Message, Gg18SignInit};
 use mpecdsa::{gg18_key_gen::*, gg18_sign::*};
 use prost::Message;
@@ -53,7 +53,7 @@ pub enum KeygenContext {
 // maybe macros could help as well?
 
 impl KeygenContext {
-    pub fn init(data: &[u8]) -> KeygenResult {
+    pub fn init(data: &[u8]) -> ProtocolResult {
         let msg = Gg18KeyGenInit::decode(data)?;
 
         let (parties, threshold, index) =
@@ -62,15 +62,13 @@ impl KeygenContext {
         let (out, c1) = gg18_key_gen_1(parties, threshold, index)?;
         let ser = serialize_bcast(&out, msg.parties as usize - 1)?;
 
-        Ok(RoundOutput {
-            output: RoundOutputType::Inter(Box::new(KeygenContext::C1(c1))),
-            data_out: pack(ser),
-        })
+        let c = KeygenContext::C1(c1);
+        Ok((ProtocolOutput::Round(Box::new(c)), pack(ser)))
     }
 }
 
-impl Keygen for KeygenContext {
-    fn advance(self, data: &[u8]) -> KeygenResult {
+impl Protocol for KeygenContext {
+    fn advance(self, data: &[u8]) -> ProtocolResult {
         let msgs = unpack(data)?;
         let n = msgs.len();
 
@@ -99,22 +97,16 @@ impl Keygen for KeygenContext {
                 let c = gg18_key_gen_6(deserialize_vec(&msgs)?, c5)?;
                 let ser = inflate(c.pk.to_bytes(true).to_vec(), n);
 
-                return Ok(RoundOutput {
-                    output: RoundOutputType::Final(Box::new(c)),
-                    data_out: pack(ser),
-                });
+                return Ok((ProtocolOutput::Group(Box::new(c)), pack(ser)));
             }
         };
 
-        Ok(RoundOutput {
-            output: RoundOutputType::Inter(Box::new(c)),
-            data_out: pack(ser),
-        })
+        Ok((ProtocolOutput::Round(Box::new(c)), pack(ser)))
     }
 }
 
 impl Group for GG18SignContext {
-    fn sign(&self, data: &[u8]) -> SigningResult {
+    fn sign(&self, data: &[u8]) -> ProtocolResult {
         SignContext::init(self.clone(), data)
     }
 }
@@ -132,7 +124,7 @@ enum SignContext {
 }
 
 impl SignContext {
-    fn init(context: GG18SignContext, data: &[u8]) -> SigningResult {
+    fn init(context: GG18SignContext, data: &[u8]) -> ProtocolResult {
         let msg = Gg18SignInit::decode(data)?;
 
         // FIXME: proto fields should have matching types, i.e. i16, not i32
@@ -142,15 +134,13 @@ impl SignContext {
         let (out, c1) = gg18_sign1(context, indices, msg.index as usize, msg.hash)?;
         let ser = serialize_bcast(&out, parties - 1)?;
 
-        Ok(RoundOutput {
-            output: RoundOutputType::Inter(Box::new(SignContext::C1(c1))),
-            data_out: pack(ser),
-        })
+        let c = SignContext::C1(c1);
+        Ok((ProtocolOutput::Round(Box::new(c)), pack(ser)))
     }
 }
 
-impl Signing for SignContext {
-    fn advance(self, data: &[u8]) -> SigningResult {
+impl Protocol for SignContext {
+    fn advance(self, data: &[u8]) -> ProtocolResult {
         let msgs = unpack(data)?;
         let n = msgs.len();
 
@@ -197,17 +187,10 @@ impl Signing for SignContext {
             }
             SignContext::C9(c9) => {
                 let sig = gg18_sign10(deserialize_vec(&msgs)?, c9)?;
-
-                return Ok(RoundOutput {
-                    output: RoundOutputType::Final(sig),
-                    data_out: pack(vec![]),
-                });
+                return Ok((ProtocolOutput::Signature(sig), pack(vec![])));
             }
         };
 
-        Ok(RoundOutput {
-            output: RoundOutputType::Inter(Box::new(c)),
-            data_out: pack(ser),
-        })
+        Ok((ProtocolOutput::Round(Box::new(c)), pack(ser)))
     }
 }

@@ -1,6 +1,6 @@
 pub mod c_api;
 pub mod cert;
-mod context;
+mod protocol;
 mod protocols;
 
 #[cfg(test)]
