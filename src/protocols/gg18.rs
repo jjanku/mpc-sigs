@@ -47,7 +47,7 @@ pub struct Gg18Keygen {
 }
 
 impl Gg18Keygen {
-    fn new() -> Box<Self> {
+    pub fn new() -> Box<Self> {
         Box::new(Gg18Keygen { context: None })
     }
 }
