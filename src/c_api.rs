@@ -1,5 +1,5 @@
 use core::slice;
-use std::ptr::null;
+use std::ptr::{null, null_mut};
 
 use crate::protocol::*;
 use crate::protocols::gg18;
@@ -41,6 +41,30 @@ pub extern "C" fn protocol_update(proto: *mut ProtoWrapper, data: *const u8, len
         _ => (null(), 0),
     };
     Buffer { ptr, len }
+}
+
+pub struct GroupWrapper {
+    group: Box<dyn Group>,
+}
+
+#[no_mangle]
+pub extern "C" fn protocol_result_group(proto: *mut ProtoWrapper) -> *mut GroupWrapper {
+    let wrapper = unsafe { &mut *proto };
+    let res = wrapper.proto.output();
+    // FIXME: save the result
+    if let Ok(ProtocolOutput::Group(group)) = res {
+        let wrapper = Box::new(GroupWrapper { group });
+        return Box::into_raw(wrapper);
+    }
+    null_mut()
+}
+
+#[no_mangle]
+pub extern "C" fn group_sign(group: *mut GroupWrapper) -> *mut ProtoWrapper {
+    let wrapper = unsafe { &mut *group };
+    let proto = wrapper.group.sign();
+    let proto_wrapper = Box::new(ProtoWrapper { proto, res: None });
+    Box::into_raw(proto_wrapper)
 }
 
 #[no_mangle]

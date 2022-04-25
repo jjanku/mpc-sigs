@@ -63,8 +63,11 @@ impl Protocol for Gg18Keygen {
         Ok(data_out)
     }
 
-    fn output(&self) -> ProtocolResult<ProtocolOutput> {
-        todo![]
+    fn output(&mut self) -> ProtocolResult<ProtocolOutput> {
+        match self.context.take() {
+            Some(KeygenContext::Done(group)) => Ok(ProtocolOutput::Group(Box::new(group))),
+            _ => Err("protocol not finished".into()),
+        }
     }
 }
 
@@ -154,8 +157,11 @@ impl Protocol for Gg18Sign {
         Ok(data_out)
     }
 
-    fn output(&self) -> ProtocolResult<ProtocolOutput> {
-        todo!()
+    fn output(&mut self) -> ProtocolResult<ProtocolOutput> {
+        match self.context.take() {
+            Some(SignContext::Done(sig)) => Ok(ProtocolOutput::Signature(sig)),
+            _ => Err("protocol not finished".into()),
+        }
     }
 }
 
