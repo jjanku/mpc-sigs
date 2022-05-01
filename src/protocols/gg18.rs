@@ -7,7 +7,6 @@ use meesign::{Gg18KeyGenInit, Gg18Message, Gg18SignInit};
 use mpecdsa::{gg18_key_gen::*, gg18_sign::*};
 use prost::Message;
 use serde::{Deserialize, Serialize};
-use std::vec;
 
 fn deserialize_vec<'de, T: Deserialize<'de>>(vec: &'de [Vec<u8>]) -> serde_json::Result<Vec<T>> {
     vec.into_iter()
@@ -63,9 +62,12 @@ impl Protocol for Gg18Keygen {
         Ok(data_out)
     }
 
-    fn output(&mut self) -> ProtocolResult<ProtocolOutput> {
+    fn output(&mut self) -> ProtocolResult<Vec<u8>> {
         match self.context.take() {
-            Some(KeygenContext::Done(group)) => Ok(ProtocolOutput::Group(Box::new(group))),
+            Some(KeygenContext::Done(group)) => {
+                let ser = serde_json::to_vec(&group)?;
+                Ok(ser)
+            }
             _ => Err("protocol not finished".into()),
         }
     }
@@ -133,18 +135,20 @@ impl KeygenContext {
     }
 }
 
-impl Group for GG18SignContext {
-    fn sign(&self) -> Box<dyn Protocol> {
-        Box::new(Gg18Sign {
-            group: self.clone(),
-            context: None,
-        })
-    }
-}
-
 pub struct Gg18Sign {
     group: GG18SignContext,
     context: Option<SignContext>,
+}
+
+impl Gg18Sign {
+    pub fn with_group(group_data: &[u8]) -> Box<dyn Protocol> {
+        // FIXME: avoid unwrap
+        let group = serde_json::from_slice(group_data).unwrap();
+        Box::new(Gg18Sign {
+            group,
+            context: None,
+        })
+    }
 }
 
 impl Protocol for Gg18Sign {
@@ -157,9 +161,9 @@ impl Protocol for Gg18Sign {
         Ok(data_out)
     }
 
-    fn output(&mut self) -> ProtocolResult<ProtocolOutput> {
+    fn output(&mut self) -> ProtocolResult<Vec<u8>> {
         match self.context.take() {
-            Some(SignContext::Done(sig)) => Ok(ProtocolOutput::Signature(sig)),
+            Some(SignContext::Done(sig)) => Ok(sig),
             _ => Err("protocol not finished".into()),
         }
     }
@@ -239,7 +243,8 @@ impl SignContext {
             }
             SignContext::R9(c9) => {
                 let sig = gg18_sign10(deserialize_vec(&msgs)?, c9)?;
-                (Self::Done(sig), vec![])
+                let ser = inflate(sig.clone(), n);
+                (Self::Done(sig), ser)
             }
             SignContext::Done(_) => todo!(),
         };

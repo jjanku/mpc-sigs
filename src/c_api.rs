@@ -1,5 +1,5 @@
 use core::slice;
-use std::ptr::{null, null_mut};
+use std::ptr::null;
 
 use crate::protocol::*;
 use crate::protocols::gg18;
@@ -13,6 +13,18 @@ pub struct ProtoWrapper {
     // FIXME: can we avoid the double indirection?
     proto: Box<dyn Protocol>,
     res: Option<ProtocolResult<Vec<u8>>>,
+}
+
+impl ProtoWrapper {
+    fn res_buffer(&self) -> Buffer {
+        let (ptr, len) = match &self.res {
+            Some(Ok(data)) => (data.as_ptr(), data.len()),
+            _ => (null(), 0),
+        };
+        Buffer { ptr, len }
+    }
+
+    // TODO: provide access to errors
 }
 
 #[repr(C)]
@@ -36,38 +48,36 @@ pub extern "C" fn protocol_update(proto: *mut ProtoWrapper, data: *const u8, len
     let wrapper = unsafe { &mut *proto };
 
     wrapper.res = Some(wrapper.proto.update(slice));
-    let (ptr, len) = match &wrapper.res {
-        Some(Ok(data)) => (data.as_ptr(), data.len()),
-        _ => (null(), 0),
-    };
-    Buffer { ptr, len }
+    wrapper.res_buffer()
 }
 
-pub struct GroupWrapper {
-    group: Box<dyn Group>,
-}
-
+// TODO: merge with update?
 #[no_mangle]
-pub extern "C" fn protocol_result_group(proto: *mut ProtoWrapper) -> *mut GroupWrapper {
+pub extern "C" fn protocol_result(proto: *mut ProtoWrapper) -> Buffer {
     let wrapper = unsafe { &mut *proto };
-    let res = wrapper.proto.output();
-    // FIXME: save the result
-    if let Ok(ProtocolOutput::Group(group)) = res {
-        let wrapper = Box::new(GroupWrapper { group });
-        return Box::into_raw(wrapper);
-    }
-    null_mut()
-}
 
-#[no_mangle]
-pub extern "C" fn group_sign(group: *mut GroupWrapper) -> *mut ProtoWrapper {
-    let wrapper = unsafe { &mut *group };
-    let proto = wrapper.group.sign();
-    let proto_wrapper = Box::new(ProtoWrapper { proto, res: None });
-    Box::into_raw(proto_wrapper)
+    wrapper.res = Some(wrapper.proto.output());
+    wrapper.res_buffer()
 }
 
 #[no_mangle]
 pub extern "C" fn protocol_free(proto: *mut ProtoWrapper) {
     unsafe { Box::from_raw(proto) };
+}
+
+// TODO: provide some access to info about group?
+#[no_mangle]
+pub extern "C" fn group_sign(
+    // TODO: store the alg inside group data?
+    alg: Algorithm,
+    group_data: *const u8,
+    len: usize,
+) -> *mut ProtoWrapper {
+    let slice = unsafe { slice::from_raw_parts(group_data, len) };
+
+    let proto = match alg {
+        Algorithm::Gg18 => gg18::Gg18Sign::with_group(slice),
+    };
+    let proto_wrapper = Box::new(ProtoWrapper { proto, res: None });
+    Box::into_raw(proto_wrapper)
 }
