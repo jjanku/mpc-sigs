@@ -190,7 +190,8 @@ impl SignContext {
         let indices: Vec<u16> = msg.indices.into_iter().map(|i| i as u16).collect();
         let parties = indices.len();
 
-        let (out, c1) = gg18_sign1(context, indices, msg.index as usize, msg.hash)?;
+        // FIXME: provide hash
+        let (out, c1) = gg18_sign1(context, indices, msg.index as usize, vec![1, 2, 3, 4])?;
         let ser = serialize_bcast(&out, parties - 1)?;
 
         Ok((SignContext::R1(c1), pack(ser)))
