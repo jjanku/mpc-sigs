@@ -1,4 +1,5 @@
 mod protocol;
+mod protocols;
 
 #[cfg(test)]
 mod tests {
