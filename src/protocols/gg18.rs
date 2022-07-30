@@ -3,6 +3,8 @@ mod meesign {
 }
 
 use crate::protocol::*;
+// TODO: could these messages be protocol-agnostic?
+// if yes, serialization could be moved outside
 use meesign::{Gg18KeyGenInit, Gg18Message, Gg18SignInit};
 use mpecdsa::{gg18_key_gen::*, gg18_sign::*};
 use prost::Message;
