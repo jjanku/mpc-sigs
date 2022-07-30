@@ -89,7 +89,7 @@ enum KeygenContext {
 // maybe macros could help as well?
 
 impl KeygenContext {
-    fn init(data: &[u8]) -> ProtocolResult<(KeygenContext, Vec<u8>)> {
+    fn init(data: &[u8]) -> ProtocolResult<(Self, Vec<u8>)> {
         let msg = Gg18KeyGenInit::decode(data)?;
 
         let (parties, threshold, index) =
@@ -98,40 +98,40 @@ impl KeygenContext {
         let (out, c1) = gg18_key_gen_1(parties, threshold, index)?;
         let ser = serialize_bcast(&out, msg.parties as usize - 1)?;
 
-        Ok((KeygenContext::R1(c1), pack(ser)))
+        Ok((Self::R1(c1), pack(ser)))
     }
 
-    fn advance(self, data: &[u8]) -> ProtocolResult<(KeygenContext, Vec<u8>)> {
+    fn advance(self, data: &[u8]) -> ProtocolResult<(Self, Vec<u8>)> {
         let msgs = unpack(data)?;
         let n = msgs.len();
 
         let (c, ser) = match self {
-            KeygenContext::R1(c1) => {
+            Self::R1(c1) => {
                 let (out, c2) = gg18_key_gen_2(deserialize_vec(&msgs)?, c1)?;
                 let ser = serialize_bcast(&out, n)?;
                 (Self::R2(c2), ser)
             }
-            KeygenContext::R2(c2) => {
+            Self::R2(c2) => {
                 let (outs, c3) = gg18_key_gen_3(deserialize_vec(&msgs)?, c2)?;
                 let ser = serialize_uni(outs)?;
                 (Self::R3(c3), ser)
             }
-            KeygenContext::R3(c3) => {
+            Self::R3(c3) => {
                 let (out, c4) = gg18_key_gen_4(deserialize_vec(&msgs)?, c3)?;
                 let ser = serialize_bcast(&out, n)?;
                 (Self::R4(c4), ser)
             }
-            KeygenContext::R4(c4) => {
+            Self::R4(c4) => {
                 let (out, c5) = gg18_key_gen_5(deserialize_vec(&msgs)?, c4)?;
                 let ser = serialize_bcast(&out, n)?;
                 (Self::R5(c5), ser)
             }
-            KeygenContext::R5(c5) => {
+            Self::R5(c5) => {
                 let c = gg18_key_gen_6(deserialize_vec(&msgs)?, c5)?;
                 let ser = inflate(c.pk.to_bytes(false).to_vec(), n);
                 (Self::Done(c), ser)
             }
-            KeygenContext::Done(_) => todo!(),
+            Self::Done(_) => todo!(),
         };
 
         Ok((c, pack(ser)))
@@ -186,7 +186,7 @@ enum SignContext {
 }
 
 impl SignContext {
-    fn init(context: GG18SignContext, data: &[u8]) -> ProtocolResult<(SignContext, Vec<u8>)> {
+    fn init(context: GG18SignContext, data: &[u8]) -> ProtocolResult<(Self, Vec<u8>)> {
         let msg = Gg18SignInit::decode(data)?;
 
         // FIXME: proto fields should have matching types, i.e. i16, not i32
@@ -196,60 +196,60 @@ impl SignContext {
         let (out, c1) = gg18_sign1(context, indices, msg.index as usize, msg.hash)?;
         let ser = serialize_bcast(&out, parties - 1)?;
 
-        Ok((SignContext::R1(c1), pack(ser)))
+        Ok((Self::R1(c1), pack(ser)))
     }
 
-    fn advance(self, data: &[u8]) -> ProtocolResult<(SignContext, Vec<u8>)> {
+    fn advance(self, data: &[u8]) -> ProtocolResult<(Self, Vec<u8>)> {
         let msgs = unpack(data)?;
         let n = msgs.len();
 
         let (c, ser) = match self {
-            SignContext::R1(c1) => {
+            Self::R1(c1) => {
                 let (outs, c2) = gg18_sign2(deserialize_vec(&msgs)?, c1)?;
                 let ser = serialize_uni(outs)?;
                 (Self::R2(c2), ser)
             }
-            SignContext::R2(c2) => {
+            Self::R2(c2) => {
                 let (out, c3) = gg18_sign3(deserialize_vec(&msgs)?, c2)?;
                 let ser = serialize_bcast(&out, n)?;
                 (Self::R3(c3), ser)
             }
-            SignContext::R3(c3) => {
+            Self::R3(c3) => {
                 let (out, c4) = gg18_sign4(deserialize_vec(&msgs)?, c3)?;
                 let ser = serialize_bcast(&out, n)?;
                 (Self::R4(c4), ser)
             }
-            SignContext::R4(c4) => {
+            Self::R4(c4) => {
                 let (out, c5) = gg18_sign5(deserialize_vec(&msgs)?, c4)?;
                 let ser = serialize_bcast(&out, n)?;
                 (Self::R5(c5), ser)
             }
-            SignContext::R5(c5) => {
+            Self::R5(c5) => {
                 let (out, c6) = gg18_sign6(deserialize_vec(&msgs)?, c5)?;
                 let ser = serialize_bcast(&out, n)?;
                 (Self::R6(c6), ser)
             }
-            SignContext::R6(c6) => {
+            Self::R6(c6) => {
                 let (out, c7) = gg18_sign7(deserialize_vec(&msgs)?, c6)?;
                 let ser = serialize_bcast(&out, n)?;
                 (Self::R7(c7), ser)
             }
-            SignContext::R7(c7) => {
+            Self::R7(c7) => {
                 let (out, c8) = gg18_sign8(deserialize_vec(&msgs)?, c7)?;
                 let ser = serialize_bcast(&out, n)?;
                 (Self::R8(c8), ser)
             }
-            SignContext::R8(c8) => {
+            Self::R8(c8) => {
                 let (out, c9) = gg18_sign9(deserialize_vec(&msgs)?, c8)?;
                 let ser = serialize_bcast(&out, n)?;
                 (Self::R9(c9), ser)
             }
-            SignContext::R9(c9) => {
+            Self::R9(c9) => {
                 let sig = gg18_sign10(deserialize_vec(&msgs)?, c9)?;
                 let ser = inflate(sig.clone(), n);
                 (Self::Done(sig), ser)
             }
-            SignContext::Done(_) => todo!(),
+            Self::Done(_) => todo!(),
         };
 
         Ok((c, pack(ser)))
