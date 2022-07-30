@@ -44,39 +44,9 @@ fn pack(msgs: Vec<Vec<u8>>) -> Vec<u8> {
     Gg18Message { message: msgs }.encode_to_vec()
 }
 
-pub struct Gg18Keygen {
-    context: Option<KeygenContext>,
-}
-
-impl Gg18Keygen {
-    pub fn new() -> Box<Self> {
-        Box::new(Gg18Keygen { context: None })
-    }
-}
-
-impl Protocol for Gg18Keygen {
-    fn update(&mut self, data: &[u8]) -> ProtocolResult<Vec<u8>> {
-        // FIXME: return error on reinit?
-        let (c, data_out) = match self.context.take() {
-            None => KeygenContext::init(data),
-            Some(c) => c.advance(data),
-        }?;
-        self.context = Some(c);
-        Ok(data_out)
-    }
-
-    fn output(&mut self) -> ProtocolResult<Vec<u8>> {
-        match self.context.take() {
-            Some(KeygenContext::Done(group)) => {
-                let ser = serde_json::to_vec(&group)?;
-                Ok(ser)
-            }
-            _ => Err("protocol not finished".into()),
-        }
-    }
-}
-
-enum KeygenContext {
+#[derive(Serialize, Deserialize)]
+pub enum KeygenContext {
+    R0,
     R1(GG18KeyGenContext1),
     R2(GG18KeyGenContext2),
     R3(GG18KeyGenContext3),
@@ -89,7 +59,11 @@ enum KeygenContext {
 // maybe macros could help as well?
 
 impl KeygenContext {
-    fn init(data: &[u8]) -> ProtocolResult<(Self, Vec<u8>)> {
+    pub fn new() -> Self {
+        KeygenContext::R0
+    }
+
+    fn init(self, data: &[u8]) -> ProtocolResult<(Self, Vec<u8>)> {
         let msg = Gg18KeyGenInit::decode(data)?;
 
         let (parties, threshold, index) =
@@ -101,11 +75,12 @@ impl KeygenContext {
         Ok((Self::R1(c1), pack(ser)))
     }
 
-    fn advance(self, data: &[u8]) -> ProtocolResult<(Self, Vec<u8>)> {
+    fn update(self, data: &[u8]) -> ProtocolResult<(Self, Vec<u8>)> {
         let msgs = unpack(data)?;
         let n = msgs.len();
 
         let (c, ser) = match self {
+            Self::R0 => unreachable!(),
             Self::R1(c1) => {
                 let (out, c2) = gg18_key_gen_2(deserialize_vec(&msgs)?, c1)?;
                 let ser = serialize_bcast(&out, n)?;
@@ -138,41 +113,27 @@ impl KeygenContext {
     }
 }
 
-pub struct Gg18Sign {
-    group: GG18SignContext,
-    context: Option<SignContext>,
-}
-
-impl Gg18Sign {
-    pub fn with_group(group_data: &[u8]) -> Box<dyn Protocol> {
-        // FIXME: avoid unwrap
-        let group = serde_json::from_slice(group_data).unwrap();
-        Box::new(Gg18Sign {
-            group,
-            context: None,
-        })
-    }
-}
-
-impl Protocol for Gg18Sign {
-    fn update(&mut self, data: &[u8]) -> ProtocolResult<Vec<u8>> {
-        let (c, data_out) = match self.context.take() {
-            None => SignContext::init(self.group.clone(), data),
-            Some(c) => c.advance(data),
+#[typetag::serde]
+impl Protocol for KeygenContext {
+    fn advance(self: Box<Self>, data: &[u8]) -> ProtocolResult<(Box<dyn Protocol>, Vec<u8>)> {
+        let (ctx, data) = match *self {
+            Self::R0 => self.init(data),
+            _ => self.update(data),
         }?;
-        self.context = Some(c);
-        Ok(data_out)
+        Ok((Box::new(ctx), data))
     }
 
-    fn output(&mut self) -> ProtocolResult<Vec<u8>> {
-        match self.context.take() {
-            Some(SignContext::Done(sig)) => Ok(sig),
+    fn finish(self: Box<Self>) -> ProtocolResult<Vec<u8>> {
+        match *self {
+            Self::Done(ctx) => Ok(serde_json::to_vec(&ctx).unwrap()),
             _ => Err("protocol not finished".into()),
         }
     }
 }
 
-enum SignContext {
+#[derive(Serialize, Deserialize)]
+pub enum SignContext {
+    R0(GG18SignContext),
     R1(GG18SignContext1),
     R2(GG18SignContext2),
     R3(GG18SignContext3),
@@ -186,24 +147,34 @@ enum SignContext {
 }
 
 impl SignContext {
-    fn init(context: GG18SignContext, data: &[u8]) -> ProtocolResult<(Self, Vec<u8>)> {
+    pub fn new(group: &[u8]) -> Self {
+        SignContext::R0(serde_json::from_slice(group).unwrap())
+    }
+
+    fn init(self, data: &[u8]) -> ProtocolResult<(Self, Vec<u8>)> {
         let msg = Gg18SignInit::decode(data)?;
 
         // FIXME: proto fields should have matching types, i.e. i16, not i32
         let indices: Vec<u16> = msg.indices.into_iter().map(|i| i as u16).collect();
         let parties = indices.len();
 
-        let (out, c1) = gg18_sign1(context, indices, msg.index as usize, msg.hash)?;
+        let c0 = match self {
+            Self::R0(c0) => c0,
+            _ => unreachable!(),
+        };
+
+        let (out, c1) = gg18_sign1(c0, indices, msg.index as usize, msg.hash)?;
         let ser = serialize_bcast(&out, parties - 1)?;
 
         Ok((Self::R1(c1), pack(ser)))
     }
 
-    fn advance(self, data: &[u8]) -> ProtocolResult<(Self, Vec<u8>)> {
+    fn update(self, data: &[u8]) -> ProtocolResult<(Self, Vec<u8>)> {
         let msgs = unpack(data)?;
         let n = msgs.len();
 
         let (c, ser) = match self {
+            Self::R0(_) => unreachable!(),
             Self::R1(c1) => {
                 let (outs, c2) = gg18_sign2(deserialize_vec(&msgs)?, c1)?;
                 let ser = serialize_uni(outs)?;
@@ -253,5 +224,23 @@ impl SignContext {
         };
 
         Ok((c, pack(ser)))
+    }
+}
+
+#[typetag::serde]
+impl Protocol for SignContext {
+    fn advance(self: Box<Self>, data: &[u8]) -> ProtocolResult<(Box<dyn Protocol>, Vec<u8>)> {
+        let (ctx, data) = match *self {
+            Self::R0(_) => self.init(data),
+            _ => self.update(data),
+        }?;
+        Ok((Box::new(ctx), data))
+    }
+
+    fn finish(self: Box<Self>) -> ProtocolResult<Vec<u8>> {
+        match *self {
+            Self::Done(sig) => Ok(sig),
+            _ => Err("protocol not finished".into()),
+        }
     }
 }

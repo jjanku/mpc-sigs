@@ -1,4 +1,5 @@
 use core::slice;
+use std::error::Error;
 use std::ffi::CString;
 use std::os::raw::c_char;
 use std::ptr::null;
@@ -7,50 +8,8 @@ use crate::protocol::*;
 use crate::protocols::gg18;
 
 #[repr(C)]
-pub enum Algorithm {
+pub enum ProtocolId {
     Gg18,
-}
-
-pub struct ProtoWrapper {
-    // FIXME: can we avoid the double indirection?
-    proto: Box<dyn Protocol>,
-    res: Option<Vec<u8>>,
-    err: CString,
-}
-
-impl ProtoWrapper {
-    fn new(proto: Box<dyn Protocol>) -> Self {
-        ProtoWrapper {
-            proto,
-            res: None,
-            err: CString::new("").unwrap(),
-        }
-    }
-
-    fn set_res(&mut self, res: ProtocolResult<Vec<u8>>) {
-        match res {
-            Ok(data) => self.res = Some(data),
-            Err(err) => self.err = CString::new(format!("{:?}", err)).unwrap(),
-        };
-    }
-
-    fn update(&mut self, data: &[u8]) {
-        let res = self.proto.update(data);
-        self.set_res(res);
-    }
-
-    fn output(&mut self) {
-        let res = self.proto.output();
-        self.set_res(res);
-    }
-
-    fn res_buffer(&self) -> Buffer {
-        let (ptr, len) = match &self.res {
-            Some(data) => (data.as_ptr(), data.len()),
-            _ => (null(), 0),
-        };
-        Buffer { ptr, len }
-    }
 }
 
 #[repr(C)]
@@ -59,55 +18,116 @@ pub struct Buffer {
     len: usize,
 }
 
+impl Buffer {
+    fn null() -> Self {
+        Self {
+            ptr: null(),
+            len: 0,
+        }
+    }
+
+    fn from_slice(s: &[u8]) -> Self {
+        Self {
+            ptr: s.as_ptr(),
+            len: s.len(),
+        }
+    }
+}
+
+pub type Result = std::result::Result<(Vec<u8>, Vec<u8>), CString>;
+
 #[no_mangle]
-pub extern "C" fn protocol_new(alg: Algorithm) -> *mut ProtoWrapper {
-    let proto = match alg {
-        Algorithm::Gg18 => gg18::Gg18Keygen::new(),
-    };
-    let wrapper = Box::new(ProtoWrapper::new(proto));
-    Box::into_raw(wrapper)
+pub extern "C" fn keygen(proto_id: ProtocolId) -> *mut Result {
+    let ctx: Box<dyn Protocol> = Box::new(match proto_id {
+        ProtocolId::Gg18 => gg18::KeygenContext::new(),
+    });
+    let ctx_ser = serde_json::to_vec(&ctx).unwrap();
+
+    let res = Ok((ctx_ser, vec![]));
+    Box::into_raw(Box::new(res))
+}
+
+fn err_to_cstr(err: Box<dyn Error>) -> CString {
+    CString::new(format!("{:?}", err)).unwrap()
+}
+
+fn advance(ctx1_ser: &[u8], data_in: &[u8]) -> ProtocolResult<(Vec<u8>, Vec<u8>)> {
+    let ctx1: Box<dyn Protocol> = serde_json::from_slice(ctx1_ser).unwrap();
+    let (ctx2, data_out) = ctx1.advance(data_in)?;
+    let ctx2_ser = serde_json::to_vec(&ctx2).unwrap();
+    Ok((ctx2_ser, data_out))
 }
 
 #[no_mangle]
-pub extern "C" fn protocol_update(proto: *mut ProtoWrapper, data: *const u8, len: usize) -> Buffer {
-    let slice = unsafe { slice::from_raw_parts(data, len) };
-    let wrapper = unsafe { &mut *proto };
-    wrapper.update(slice);
-    wrapper.res_buffer()
+pub extern "C" fn protocol_advance(
+    ctx_ptr: *const u8,
+    ctx_len: usize,
+    data_ptr: *const u8,
+    data_len: usize,
+) -> *mut Result {
+    let ctx_ser = unsafe { slice::from_raw_parts(ctx_ptr, ctx_len) };
+    let data_in = unsafe { slice::from_raw_parts(data_ptr, data_len) };
+
+    let res = advance(ctx_ser, data_in).map_err(err_to_cstr);
+    Box::into_raw(Box::new(res))
 }
 
-// TODO: merge with update?
-#[no_mangle]
-pub extern "C" fn protocol_result(proto: *mut ProtoWrapper) -> Buffer {
-    let wrapper = unsafe { &mut *proto };
-    wrapper.output();
-    wrapper.res_buffer()
-}
-
-#[no_mangle]
-pub extern "C" fn protocol_error(proto: *const ProtoWrapper) -> *const c_char {
-    let wrapper = unsafe { &*proto };
-    wrapper.err.as_ptr()
+fn finish(ctx_ser: &[u8]) -> ProtocolResult<(Vec<u8>, Vec<u8>)> {
+    let ctx: Box<dyn Protocol> = serde_json::from_slice(ctx_ser).unwrap();
+    let data_out = ctx.finish()?;
+    Ok((vec![], data_out))
 }
 
 #[no_mangle]
-pub extern "C" fn protocol_free(proto: *mut ProtoWrapper) {
-    unsafe { Box::from_raw(proto) };
+pub extern "C" fn protocol_finish(ctx_ptr: *const u8, ctx_len: usize) -> *mut Result {
+    let ctx_ser = unsafe { slice::from_raw_parts(ctx_ptr, ctx_len) };
+    let res = finish(ctx_ser).map_err(err_to_cstr);
+    Box::into_raw(Box::new(res))
 }
 
-// TODO: provide some access to info about group?
 #[no_mangle]
-pub extern "C" fn group_sign(
-    // TODO: store the alg inside group data?
-    alg: Algorithm,
-    group_data: *const u8,
-    len: usize,
-) -> *mut ProtoWrapper {
-    let slice = unsafe { slice::from_raw_parts(group_data, len) };
+pub extern "C" fn result_context(res_ptr: *const Result) -> Buffer {
+    match unsafe { &*res_ptr } {
+        Ok((ctx_ser, _)) => Buffer::from_slice(ctx_ser),
+        Err(_) => Buffer::null(),
+    }
+}
 
-    let proto = match alg {
-        Algorithm::Gg18 => gg18::Gg18Sign::with_group(slice),
-    };
-    let proto_wrapper = Box::new(ProtoWrapper::new(proto));
-    Box::into_raw(proto_wrapper)
+#[no_mangle]
+pub extern "C" fn result_data(res_ptr: *const Result) -> Buffer {
+    match unsafe { &*res_ptr } {
+        Ok((_, data_out)) => Buffer::from_slice(data_out),
+        Err(_) => Buffer::null(),
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn result_error(res_ptr: *const Result) -> *const c_char {
+    match unsafe { &*res_ptr } {
+        Ok(_) => null(),
+        Err(cstr) => cstr.as_ptr(),
+    }
+}
+
+#[no_mangle]
+#[allow(unused_must_use)]
+pub extern "C" fn result_free(res: *mut Result) {
+    unsafe { Box::from_raw(res) };
+}
+
+#[no_mangle]
+pub extern "C" fn sign(
+    proto_id: ProtocolId,
+    group_ptr: *const u8,
+    group_len: usize,
+) -> *mut Result {
+    let group_ser = unsafe { slice::from_raw_parts(group_ptr, group_len) };
+
+    let ctx: Box<dyn Protocol> = Box::new(match proto_id {
+        ProtocolId::Gg18 => gg18::SignContext::new(group_ser),
+    });
+    let ctx_ser = serde_json::to_vec(&ctx).unwrap();
+
+    let res = Ok((ctx_ser, vec![]));
+    Box::into_raw(Box::new(res))
 }
